@@ -41,6 +41,7 @@ train[, CalDay:=as.numeric(substr(Date, 9, 10))]
 train[, TimeBY:=as.numeric(Date - as.Date(paste0(Year, "-01-01"), "%Y-%m-%d"))]
 # Abs time
 train[, AbsTime:=time(Date)]
+
 # let's see daily sale per year
 summ <- train[, sum(Sales), by=Date]
 summ[, Year:=year(Date)]
@@ -111,18 +112,99 @@ train[, CalDay:=as.numeric(substr(Date, 9, 10))]
 train[, TimeBY:=as.numeric(Date - as.Date(paste0(Year, "-01-01"), "%Y-%m-%d"))]
 # Abs time
 train[, AbsTime:=time(Date)]
+# competitionOpenSince assuming mid month.
+train[, competitionOpenSince:=as.numeric(Date-as.Date(paste(CompetitionOpenSinceYear, CompetitionOpenSinceMonth, "15", sep="-"), "%Y-%m-%d"))]
+# relationships between competition distance and history
+train[, rel1:=competitionOpenSince/CompetitionDistance]
+train[, rel2:=competitionOpenSince*CompetitionDistance, ]
+train[, rel3:=CompetitionDistance/competitionOpenSince, ]
+train[, rel4:=competitionOpenSince/CompetitionDistance^2, ]
+train[, rel5:=competitionOpenSince/CompetitionDistance^3, ]
+# relationships between competition distance and customers
+# train[, rel6:=Customers/CompetitionDistance]
+# train[, rel7:=Customers*CompetitionDistance, ]
+# train[, rel8:=Customers/CompetitionDistance^2, ]
+# train[, rel9:=Customers/CompetitionDistance^3, ]
+# # relationships between competitionOpenSince and customers
+# train[, rel10:=Customers/competitionOpenSince]
+# train[, rel11:=Customers*competitionOpenSince, ]
+# train[, rel12:=Customers/competitionOpenSince^2, ]
+# train[, rel13:=Customers/competitionOpenSince^3, ]
+train[, Promo2SinceWeek:=as.numeric(Promo2SinceWeek)]
+train[, Promo2SinceYear:=as.numeric(Promo2SinceYear)]
+str(train)
+summary(train)
+train[is.na(train)] <- 0
+train[train==Inf] <- 0
+# don't use Store and Date. Also, customer is not great.. why do they give it? Think about how to use it. Perhaps predict customers, then sales?
 
 # Train -------------------------------------------------------------------
 # There are three approaches that can be tried: 1) a time series model(one model per store?); 2) Algo that trys to abstract everything (RF); 3) Blend both. I will start with 2).
+mytest <- train[Date>=as.Date("2014-08-01","%Y-%m-%d") & Date<=as.Date("2014-09-17","%Y-%m-%d"), !(names(train)%in%c("Store", "Date", "Customers")), with=FALSE]
+mytrain <- train[Date<as.Date("2014-08-01","%Y-%m-%d"), !(names(train)%in%c("Store", "Date", "Customers")), with=FALSE]
 
-
+require(h2o)
+localH2O <- h2o.init()
+train_hex <- as.h2o(mytrain, localH2O, "train_hex")
+test_hex <- as.h2o(mytest, localH2O, "test_hex")
+# train RF in flow
+rfmodel <- h2o.getModel("drf-d28fd9a1-7f51-43dd-b718-cb6ac689c385", localH2O)
+pred_hex <- h2o.predict(rfmodel, test_hex)
+results <- data.table(actual=mytest$Sales, as.data.frame(pred_hex))  
+  
 
 # Test --------------------------------------------------------------------
-
+# Any day and store with 0 sales is ignored in scoring.
+results <- results[actual!=0, ]
+RMSPE <- sqrt(1/nrow(results)*sum(((results$actual-results$predict)/results$actual)^2))
+RMSPE
 
 # Optimise ----------------------------------------------------------------
 
 
 # Train all and submit ----------------------------------------------------
+train_hex_all <- as.h2o(train, localH2O, "train_hex_all")
 
+#feature engineering
+# repeat on test = bug, dunno why... seems due to upload of h2o.
+# test[, Year:=year(Date)]
+# test[, Week:=week(Date)]
+test[, Year:=as.numeric(substr(Date, 1, 4))]
+test[, CalDay:=as.numeric(substr(Date, 9, 10))]
+# Define time in days since beginning of year
+test[, TimeBY:=as.numeric(Date - as.Date(paste0(Year, "-01-01"), "%Y-%m-%d"))]
+test[, week:=ceiling(TimeBY/7)]
+# Abs time
+test[, AbsTime:=time(Date)]
+# competitionOpenSince assuming mid month.
+test[, competitionOpenSince:=as.numeric(Date-as.Date(paste(CompetitionOpenSinceYear, CompetitionOpenSinceMonth, "15", sep="-"), "%Y-%m-%d"))]
+# relationships between competition distance and history
+test[, rel1:=competitionOpenSince/CompetitionDistance]
+test[, rel2:=competitionOpenSince*CompetitionDistance, ]
+test[, rel3:=CompetitionDistance/competitionOpenSince, ]
+test[, rel4:=competitionOpenSince/CompetitionDistance^2, ]
+test[, rel5:=competitionOpenSince/CompetitionDistance^3, ]
+# relationships between competition distance and customers
+test[, rel6:=Customers/CompetitionDistance]
+test[, rel7:=Customers*CompetitionDistance, ]
+test[, rel8:=Customers/CompetitionDistance^2, ]
+test[, rel9:=Customers/CompetitionDistance^3, ]
+# relationships between competitionOpenSince and customers
+test[, rel10:=Customers/competitionOpenSince]
+test[, rel11:=Customers*competitionOpenSince, ]
+test[, rel12:=Customers/competitionOpenSince^2, ]
+test[, rel13:=Customers/competitionOpenSince^3, ]
+test[, Promo2SinceWeek:=as.numeric(Promo2SinceWeek)]
+test[, Promo2SinceYear:=as.numeric(Promo2SinceYear)]
+str(test)
+summary(test)
+test[is.na(test)] <- 0
+test[test==Inf] <- 0
 
+train_hex_all <- as.h2o(test, localH2O, "test_hex_all")
+
+rfmodel <- h2o.getModel("drf-d28fd9a1-7f51-43dd-b718-cb6ac689c385", localH2O)
+pred_hex <- h2o.predict(rfmodel, test_hex)
+results <- data.table(actual=mytest$Sales, as.data.frame(pred_hex))  
+
+h2o.shutdown(localH2O, prompt=FALSE)
