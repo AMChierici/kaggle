@@ -105,6 +105,7 @@ sum(!(test$Store %in% store$Store))
 test <- store[test]
 
 #feature engineering
+train[, Date:=as.Date(Date, "%Y-%m-%d")]
 train[, Year:=year(Date)]
 train[, Week:=week(Date)]
 train[, CalDay:=as.numeric(substr(Date, 9, 10))]
@@ -138,42 +139,13 @@ train[is.na(train)] <- 0
 train[train==Inf] <- 0
 # don't use Store and Date. Also, customer is not great.. why do they give it? Think about how to use it. Perhaps predict customers, then sales?
 
-# Train -------------------------------------------------------------------
-# There are three approaches that can be tried: 1) a time series model(one model per store?); 2) Algo that trys to abstract everything (RF); 3) Blend both. I will start with 2).
-mytest <- train[Date>=as.Date("2014-08-01","%Y-%m-%d") & Date<=as.Date("2014-09-17","%Y-%m-%d"), !(names(train)%in%c("Store", "Date", "Customers")), with=FALSE]
-mytrain <- train[Date<as.Date("2014-08-01","%Y-%m-%d"), !(names(train)%in%c("Store", "Date", "Customers")), with=FALSE]
-
-require(h2o)
-localH2O <- h2o.init()
-train_hex <- as.h2o(mytrain, localH2O, "train_hex")
-test_hex <- as.h2o(mytest, localH2O, "test_hex")
-# train RF in flow
-rfmodel <- h2o.getModel("drf-d28fd9a1-7f51-43dd-b718-cb6ac689c385", localH2O)
-pred_hex <- h2o.predict(rfmodel, test_hex)
-results <- data.table(actual=mytest$Sales, as.data.frame(pred_hex))  
-  
-
-# Test --------------------------------------------------------------------
-# Any day and store with 0 sales is ignored in scoring.
-results <- results[actual!=0, ]
-RMSPE <- sqrt(1/nrow(results)*sum(((results$actual-results$predict)/results$actual)^2))
-RMSPE
-
-# Optimise ----------------------------------------------------------------
-
-
-# Train all and submit ----------------------------------------------------
-train_hex_all <- as.h2o(train, localH2O, "train_hex_all")
-
-#feature engineering
-# repeat on test = bug, dunno why... seems due to upload of h2o.
-# test[, Year:=year(Date)]
-# test[, Week:=week(Date)]
-test[, Year:=as.numeric(substr(Date, 1, 4))]
+# repeat for test
+test[, Date:=as.Date(Date, "%Y-%m-%d")]
+test[, Year:=year(Date)]
+test[, Week:=week(Date)]
 test[, CalDay:=as.numeric(substr(Date, 9, 10))]
 # Define time in days since beginning of year
 test[, TimeBY:=as.numeric(Date - as.Date(paste0(Year, "-01-01"), "%Y-%m-%d"))]
-test[, week:=ceiling(TimeBY/7)]
 # Abs time
 test[, AbsTime:=time(Date)]
 # competitionOpenSince assuming mid month.
@@ -185,15 +157,15 @@ test[, rel3:=CompetitionDistance/competitionOpenSince, ]
 test[, rel4:=competitionOpenSince/CompetitionDistance^2, ]
 test[, rel5:=competitionOpenSince/CompetitionDistance^3, ]
 # relationships between competition distance and customers
-test[, rel6:=Customers/CompetitionDistance]
-test[, rel7:=Customers*CompetitionDistance, ]
-test[, rel8:=Customers/CompetitionDistance^2, ]
-test[, rel9:=Customers/CompetitionDistance^3, ]
-# relationships between competitionOpenSince and customers
-test[, rel10:=Customers/competitionOpenSince]
-test[, rel11:=Customers*competitionOpenSince, ]
-test[, rel12:=Customers/competitionOpenSince^2, ]
-test[, rel13:=Customers/competitionOpenSince^3, ]
+# test[, rel6:=Customers/CompetitionDistance]
+# test[, rel7:=Customers*CompetitionDistance, ]
+# test[, rel8:=Customers/CompetitionDistance^2, ]
+# test[, rel9:=Customers/CompetitionDistance^3, ]
+# # relationships between competitionOpenSince and customers
+# test[, rel10:=Customers/competitionOpenSince]
+# test[, rel11:=Customers*competitionOpenSince, ]
+# test[, rel12:=Customers/competitionOpenSince^2, ]
+# test[, rel13:=Customers/competitionOpenSince^3, ]
 test[, Promo2SinceWeek:=as.numeric(Promo2SinceWeek)]
 test[, Promo2SinceYear:=as.numeric(Promo2SinceYear)]
 str(test)
@@ -201,10 +173,41 @@ summary(test)
 test[is.na(test)] <- 0
 test[test==Inf] <- 0
 
-train_hex_all <- as.h2o(test, localH2O, "test_hex_all")
 
-rfmodel <- h2o.getModel("drf-d28fd9a1-7f51-43dd-b718-cb6ac689c385", localH2O)
+# Train -------------------------------------------------------------------
+# There are three approaches that can be tried: 1) a time series model(one model per store?); 2) Algo that trys to abstract everything (RF); 3) Blend both. I will start with 2).
+mytest <- train[Date>=as.Date("2014-08-01","%Y-%m-%d") & Date<=as.Date("2014-09-17","%Y-%m-%d"), !(names(train)%in%c("Store", "Date", "Customers")), with=FALSE]
+mytrain <- train[Date<as.Date("2014-08-01","%Y-%m-%d"), !(names(train)%in%c("Store", "Date", "Customers")), with=FALSE]
+
+require(h2o)
+localH2O <- h2o.init(max_mem_size = '8G')
+train_hex <- as.h2o(mytrain, localH2O, "train_hex")
+test_hex <- as.h2o(mytest, localH2O, "test_hex")
+# train RF in flow
+rfmodel <- h2o.getModel("drf-5a036c99-3fb7-42a3-9116-cad2ddb6c746", localH2O)
 pred_hex <- h2o.predict(rfmodel, test_hex)
 results <- data.table(actual=mytest$Sales, as.data.frame(pred_hex))  
+  
+
+# Test --------------------------------------------------------------------
+# Any day and store with 0 sales is ignored in scoring.
+results <- results[actual!=0, ]
+RMSPE <- sqrt(1/nrow(results)*sum(((results$actual-results$predict)/results$actual)^2))
+RMSPE
+# shit, with Customers it was 7%!
+
+# Optimise ----------------------------------------------------------------
+
+
+# Train all and submit ----------------------------------------------------
+train_hex_all <- as.h2o(train, localH2O, "train_hex_all")
+test_hex_all <- as.h2o(test, localH2O, "test_hex_all")
+# train RF in flow
+rfmodel <- h2o.getModel("drf-35a64c03-742d-494a-9300-9236bd3729a1", localH2O)
+pred_hex_all <- h2o.predict(rfmodel, test_hex_all)
+submission <- data.table(test$Store, as.data.frame(pred_hex))  
+setnames(submission, c("V1", "predict"), c("Id", "Sales"))
+require(readr)
+write_csv(submission, "submission.csv")
 
 h2o.shutdown(localH2O, prompt=FALSE)
